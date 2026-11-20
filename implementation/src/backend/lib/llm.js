@@ -42,7 +42,13 @@ export function createGroqClient(cfgFn = getConfig, fetchImpl = globalThis.fetch
         await sleep(Math.min(retryAfter, 20) * 1000);
         continue;
       }
-      if (!res.ok) throw new AppError(502, 'LLM_ERROR', `Groq request failed (HTTP ${res.status}). Check the model name in Settings.`);
+      if (!res.ok) {
+        const ctype = res.headers?.get?.('content-type') || '';
+        if (res.status === 403 && ctype.includes('text/html')) {
+          throw new AppError(502, 'LLM_BLOCKED', 'Access to api.groq.com is blocked by your network/proxy (HTML block page received). Use a network that allows Groq or ask IT to allow api.groq.com.');
+        }
+        throw new AppError(502, 'LLM_ERROR', `Groq request failed (HTTP ${res.status}). Check the API key and model name in Settings.`);
+      }
       const data = await res.json();
       const content = data.choices?.[0]?.message?.content || '';
       try {
