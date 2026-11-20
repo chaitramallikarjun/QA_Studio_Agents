@@ -18,6 +18,15 @@ test('markdown templates parse into sections and columns', () => {
   assert.ok(tc.techniques.includes('Boundary Value Analysis'));
 });
 
+test('Jira 404 caused by bad credentials is reported as auth error', async () => {
+  const { createJiraClient } = await import('../lib/jira.js');
+  const cfg = () => ({ JIRA_BASE_URL: 'https://x.atlassian.net', JIRA_EMAIL: 'a@b.c', JIRA_API_TOKEN: 't' });
+  const badAuth = createJiraClient(cfg, async (url) => ({ status: url.includes('/myself') ? 401 : 404, ok: false }));
+  await assert.rejects(badAuth.getIssue('KAN-4'), (e) => e.code === 'JIRA_AUTH');
+  const goodAuth = createJiraClient(cfg, async (url) => (url.includes('/myself') ? { status: 200, ok: true, json: async () => ({}) } : { status: 404, ok: false }));
+  await assert.rejects(goodAuth.getIssue('KAN-4'), (e) => e.code === 'JIRA_NOT_FOUND');
+});
+
 test('issue key detection and ADF conversion', () => {
   assert.ok(isIssueKey('scrum-5'));
   assert.ok(!isIssueKey('test the login page'));

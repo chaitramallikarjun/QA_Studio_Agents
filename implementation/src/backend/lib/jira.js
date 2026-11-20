@@ -57,7 +57,18 @@ export function createJiraClient(cfgFn = getConfig, fetchImpl = globalThis.fetch
     }
     if (res.status === 401) throw new AppError(401, 'JIRA_AUTH', 'Jira rejected the credentials (401). Check email and API token.');
     if (res.status === 403) throw new AppError(403, 'JIRA_FORBIDDEN', 'No permission to read this Jira issue (403).');
-    if (res.status === 404) throw new AppError(404, 'JIRA_NOT_FOUND', 'Jira issue not found or not visible to this account.');
+    if (res.status === 404) {
+      // Jira Cloud answers 404 (not 401) when credentials are invalid, so confirm auth before blaming the issue key.
+      if (!pathAndQuery.startsWith('/rest/api/3/myself')) {
+        try {
+          await request('/rest/api/3/myself');
+        } catch (e) {
+          if (e.code === 'JIRA_AUTH') throw new AppError(401, 'JIRA_AUTH', 'Jira rejected the credentials, so the issue could not be read. Check the Jira email and API token in Settings (use an Atlassian API token starting with "ATATT", not the Groq key).');
+          throw e;
+        }
+      }
+      throw new AppError(404, 'JIRA_NOT_FOUND', 'Jira issue not found, or this account has no permission to view it.');
+    }
     if (!res.ok) throw new AppError(502, 'JIRA_ERROR', `Jira returned HTTP ${res.status}.`);
     return res.json();
   }
