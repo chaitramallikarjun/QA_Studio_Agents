@@ -1,94 +1,72 @@
-import { test, beforeEach } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runPipeline, clearCache } from '../lib/pipeline.js';
+import { runPipeline } from '../lib/pipeline.js';
 import { loadTemplate } from '../lib/prompts.js';
 
-// MOCKED Jira + Groq: verifies orchestration only, not live integration.
 const ISSUE = {
   key: 'SCRUM-5',
   summary: 'VWO Login Dashboard',
-  description: 'Users must be able to log in using email and password.\nThe account is locked after repeated failed attempts.',
+  description: 'Users must be able to log in using email and password.',
   acceptanceCriteria: '',
   comments: [],
 };
 const jira = { getIssue: async () => ISSUE, getChildren: async () => [] };
 
-function makeLlm({ badFirst = false } = {}) {
+function mockLlm(markdown) {
   const calls = [];
-  let genCount = 0;
-  const llm = async ({ stage, prompt }) => {
-    calls.push(stage);
-    if (stage === 'P1') {
-      const reqs = [
-        { statement: 'Login with email/password', quote: 'Users must be able to log in using email and password', segment: 'SCRUM-5.description', category: 'functional', testable: true, negativeApplicable: true },
-        { statement: 'Invented SSO', quote: 'Users can log in with SSO', segment: 'SCRUM-5.description', category: 'functional', testable: true, negativeApplicable: false },
-      ];
-      if (prompt.includes('CLARIFICATION.Q-001')) {
-        reqs.push({ statement: 'Lockout after 5 failures', quote: 'Lock after 5 failed attempts', segment: 'CLARIFICATION.Q-001', category: 'security', testable: true, negativeApplicable: true });
-      }
-      return { requirements: reqs };
-    }
-    if (stage === 'P2') return { questions: [{ area: 'Lockout', finding: 'missing', question: 'How many failed attempts lock the account?', reqRefs: [], impact: 'boundary' }] };
-    if (stage === 'P5') {
-      genCount++;
-      const pos = { reqIds: ['REQ-001'], module: 'Auth', functionality: 'Login', title: 'Valid login', type: 'Positive', technique: 'Use Case', preconditions: 'User exists', steps: 'Given user\nWhen valid creds\nThen logged in', testData: '', expectedResult: 'Dashboard shown', priority: 'High', tags: ['smoke'], sourceQuote: 'log in using email and password', confidence: 'High' };
-      const neg = { ...pos, title: 'Invalid password rejected', type: 'Negative', technique: 'Equivalence Partitioning', steps: 'Given user\nWhen wrong password\nThen rejected', expectedResult: 'Login is rejected (exact message: Needs clarification)' };
-      const extra = prompt.includes('REQ-002') ? [{ ...neg, reqIds: ['REQ-002'], title: 'Lockout at limit', type: 'Boundary', technique: 'Boundary Value Analysis', steps: 'Given user\nWhen 5 failed attempts\nThen locked', sourceQuote: 'Lock after 5 failed attempts' }] : [];
-      return { testCases: badFirst && genCount === 1 ? [pos, pos] : [neg, pos, { ...pos }, ...extra] };
-    }
-    if (stage === 'P3') {
-      const sections = loadTemplate('plan').sections.map((h) => ({ heading: h, items: [{ text: 'Verify login.', basis: 'Documented', reqIds: ['REQ-001'] }] }));
-      return { title: 'Test Plan — SCRUM-5', sections };
-    }
-    if (stage === 'P6') return { issues: [] };
-    throw new Error('unexpected stage ' + stage);
+  const llm = async (request) => {
+    calls.push(request);
+    return markdown;
   };
   llm.modelName = () => 'mock-model';
   return { llm, calls };
 }
 
-beforeEach(() => clearCache());
+for (const [artifact, stage] of [['plan', 'P3'], ['strategy', 'P4']]) {
+  test(`${artifact} is generated as direct Markdown in one call`, async () => {
+    const template = loadTemplate(artifact);
+    const markdown = `# ${template.title}\n\n${template.sections.map((heading) => `## ${heading}`).join('\n\n')}`;
+    const { llm, calls } = mockLlm(markdown);
 
-test('test cases: unverifiable requirement dropped, duplicates removed, ids sequential', async () => {
-  const { llm } = makeLlm();
-  const r = await runPipeline({ artifact: 'testcases', input: 'scrum-5', llm, jira });
-  assert.equal(r.requirements.length, 1);
-  assert.equal(r.source.rejectedRequirements.length, 1);
-  assert.deepEqual(r.result.testCases.map((t) => t.id), ['SC-001', 'SC-002']);
-  assert.equal(r.result.testCases[0].type, 'Positive');
-  assert.equal(r.validation.duplicatesRemoved.length, 1);
-  assert.equal(r.validation.errors.length, 0);
-  assert.equal(r.status, 'Draft — pending clarification');
+    const result = await runPipeline({ artifact, input: 'SCRUM-5', llm, jira, context: 'Focus on documented authentication.' });
+    assert.equal(result.directText, true);
+    assert.equal(result.status, 'Draft — pending human review');
+    assert.equal(result.markdown, markdown);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].stage, stage);
+    assert.equal(calls[0].output, 'text');
+    assert.match(calls[0].prompt, /Users must be able to log in using email and password/);
+    assert.match(calls[0].prompt, /Focus on documented authentication/);
+    assert.deepEqual(result.validation.warnings, []);
+  });
+}
+
+test('test cases are returned as Markdown with template columns', async () => {
+  const columns = loadTemplate('testcases').columns.map((column) => column.label);
+  const markdown = `# Test Cases\n\n| ${columns.join(' | ')} |\n| ${columns.map(() => '---').join(' | ')} |\n| SC-001 | REQ-001 | Auth | Login | Documented login | Positive | Requirement-based | N/A | Submit credentials | Insufficient information to determine. | Insufficient information to determine. | Medium | proposed | Users must be able to log in using email and password. | Medium | Not Run |`;
+  const { llm, calls } = mockLlm(markdown);
+
+  const result = await runPipeline({ artifact: 'testcases', input: 'SCRUM-5', llm, jira });
+  assert.equal(result.directText, true);
+  assert.equal(result.markdown, markdown);
+  assert.equal(result.status, 'Draft — pending human review');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].stage, 'P5');
+  assert.equal(calls[0].output, 'text');
+  assert.deepEqual(result.validation.warnings, []);
 });
 
-test('repair loop re-generates when validators fail', async () => {
-  const { llm, calls } = makeLlm({ badFirst: true });
-  const r = await runPipeline({ artifact: 'testcases', input: 'SCRUM-5', llm, jira });
-  assert.equal(calls.filter((c) => c === 'P5').length, 2);
-  assert.equal(r.validation.attempts.length, 2);
-  assert.equal(r.validation.errors.length, 0);
+test('test cases warn if the Markdown table columns do not match the template', async () => {
+  const { llm } = mockLlm('# Test Cases\n\n| ID | Scenario |\n|---|---|');
+  const result = await runPipeline({ artifact: 'testcases', input: 'SCRUM-5', llm, jira });
+  assert.deepEqual(result.validation.warnings, ['Test case table is missing or reorders template columns.']);
 });
 
-test('answering questions adds clarification requirements and finalises status', async () => {
-  const { llm } = makeLlm();
-  const r = await runPipeline({ artifact: 'testcases', input: 'SCRUM-5', llm, jira, answers: [{ id: 'Q-001', answer: 'Lock after 5 failed attempts' }] });
-  assert.equal(r.requirements.length, 2);
-  assert.equal(r.requirements[1].segment, 'CLARIFICATION.Q-001');
-  assert.ok(r.result.testCases.some((t) => t.type === 'Boundary'));
-  assert.equal(r.status, 'Final — pending QA sign-off');
-});
-
-test('accept-as-gap resolves question; plan renders markdown with gaps and traceability', async () => {
-  const { llm } = makeLlm();
-  const r = await runPipeline({ artifact: 'plan', input: 'SCRUM-5', llm, jira, answers: [{ id: 'Q-001', acceptGap: true }] });
-  assert.equal(r.status, 'Final — pending QA sign-off');
-  assert.match(r.markdown, /## 14\. Approvals/);
-  assert.match(r.markdown, /Accepted as gap/);
-  assert.match(r.markdown, /Requirement traceability/);
-});
-
-test('free-text prompt input is used as source without Jira', async () => {
-  const { llm } = makeLlm();
+test('free-text source is sent to the model without calling Jira', async () => {
+  const source = 'Users can sign in with their corporate account.';
+  const { llm, calls } = mockLlm('# Test Plan\n\n## 1. Objective');
   const noJira = { getIssue: async () => assert.fail('Jira should not be called') };
-  await assert.rejects(runPipeline({ artifact: 'testcases', input: 'Some feature text', llm, jira: noJira }), /No verifiable requirements/);
+  const result = await runPipeline({ artifact: 'plan', input: source, llm, jira: noJira });
+  assert.equal(result.markdown, '# Test Plan\n\n## 1. Objective');
+  assert.match(calls[0].prompt, /Users can sign in with their corporate account/);
 });

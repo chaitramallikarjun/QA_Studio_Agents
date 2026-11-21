@@ -7,36 +7,24 @@
 | Key | Label |
 |---|---|
 | id | Scenario# |
-| reqIds | REQ-ID |
 | module | Module |
 | functionality | Functionality Name |
 | title | Test Case Title |
-| type | Type |
-| technique | Technique |
 | preconditions | Pre-conditions |
-| steps | Test Steps (Gherkin) |
+| steps | Test Steps (manual) |
 | testData | Test Data |
 | expectedResult | Expected Result |
 | priority | Priority |
-| tags | Tags |
-| sourceQuote | Source Quote |
-| confidence | Confidence |
-| status | Status |
 
 ## Types
 - Positive
 - Negative
 - Boundary
 - Edge
-- Security
-- Accessibility
-- Performance
-- Usability
 
 ## Negative Types
 - Negative
 - Boundary
-- Security
 
 ## Techniques
 - Equivalence Partitioning

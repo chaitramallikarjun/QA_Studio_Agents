@@ -2,6 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../server.js';
 import { AppError } from '../lib/errors.js';
+import { publicSettings, updateSettings } from '../lib/config.js';
 
 let server;
 let base;
@@ -22,6 +23,19 @@ test('settings never expose secrets', async () => {
   const s = await (await fetch(base + '/api/settings')).json();
   assert.ok(!('jiraApiToken' in s) && !('groqApiKey' in s));
   assert.equal(typeof s.jiraApiTokenSet, 'boolean');
+});
+
+test('Vercel settings are read-only and direct users to project environment variables', () => {
+  process.env.VERCEL = '1';
+  try {
+    assert.equal(publicSettings().settingsEditable, false);
+    assert.throws(
+      () => updateSettings({}, { persist: false }),
+      (error) => error.status === 503 && /Vercel project settings/.test(error.message),
+    );
+  } finally {
+    delete process.env.VERCEL;
+  }
 });
 
 test('validation errors return 400 JSON and server keeps running', async () => {

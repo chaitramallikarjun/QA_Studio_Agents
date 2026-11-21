@@ -1,31 +1,22 @@
 # QA Studio
 
-Generates a **Test Plan**, **Test Strategy** and **Test Cases** from a Jira Cloud issue (or pasted requirement text) using Groq, with an accuracy-first pipeline: every statement must trace back to a verbatim Jira quote, and open questions must be answered (or accepted as gaps) before the output becomes Final.
+Generates a **Test Plan**, **Test Strategy** and **Test Cases** from a Jira Cloud issue (or pasted requirement text) using Groq. Each artifact is generated as readable Markdown in one model call.
 
 Pilot: local Jira Cloud project, `SCRUM-5` (VWO Login Dashboard).
 
-## How accuracy is enforced
+## Generation flow
 
-| Stage | What happens |
-|---|---|
-| S1 Fetch | Read-only Jira Cloud fetch: one issue, or epic + direct children (Strategy tab). Free text is also accepted. |
-| S2 Requirements (P1) | LLM splits the source into atomic `REQ-xxx`. **Code verifies each quote exists verbatim in Jira**; unverifiable ones are discarded and shown. |
-| S3 Gaps (P2) | LLM raises questions (missing / ambiguous / conflict). It never answers them. |
-| Clarification gate | You answer each question or tick *Accept as gap*, then regenerate. Answers become `CLARIFICATION.Q-xxx` source segments. Status stays **Draft** until all are resolved. |
-| S5 Generate (P3/P4/P5) | Fills the Markdown template exactly. Each item is labelled Documented / Proposed / Insufficient. |
-| S6 Review (P6) | An independent reviewer prompt looks for unsupported claims, missing coverage, duplicates and invalid scenarios. |
-| S7 Code validators | Template section order, valid REQ refs, Gherkin form, source-quote check, invented quoted messages, coverage (every testable REQ has a test; every REQ that needs a negative has one), near-duplicate removal. |
-| Repair loop | If S6/S7 find blocking issues, the output is regenerated with that feedback (max 2 repairs). The best attempt is kept and the remaining issues are shown in the **Accuracy report**. |
+Each tab fetches the selected Jira issue (read-only), or accepts pasted requirement text, then sends the source, artifact template, and optional testing context to Groq. The model returns Markdown directly. The backend checks Plan/Strategy headings and the Test Cases table header against their templates. Every result remains **Draft — pending human review**.
 
-LLM calls use `temperature 0`, `seed 42` and JSON mode. P1/P2 results are cached per source, so question ids stay stable across regenerations.
+The prompt instructs Groq to treat Jira content as data, avoid inventing behavior, distinguish proposals from confirmed requirements, and use `Insufficient information to determine.` for missing facts. These instructions are not a semantic validator: review the generated content before using it.
 
-Human sign-off is still required. The best possible status is *Final — pending QA sign-off*.
+LLM requests use `temperature 0` and `seed 42`. Text output avoids JSON parsing errors; a provider response that is genuinely malformed Markdown may still require regeneration.
 
 ## Layout
 
 ```
 implementation/
-  prompts/     P1–P6 RICE-POT prompts (.md) — edit to tune behaviour
+  prompts/     Artifact prompts (.md) — edit to tune behaviour
   templates/   test_plan / test_strategy / test_cases templates (.md) — edit sections & columns
   src/backend  Node 20 + Express API, Jira, Groq, pipeline, validators, exporters, tests
   src/frontend React + Vite UI (Test Plan | Test Strategy | Test Cases | Settings)
@@ -48,6 +39,26 @@ npm run dev                   # http://localhost:5173 (proxies /api to backend)
 
 For a single-port setup, run `npm run build` in `frontend`; the backend then serves the built UI at http://localhost:8787.
 
+## Deploy to Vercel
+
+The repository root contains a Vercel Express function adapter and build configuration. From the repository root:
+
+```powershell
+npx vercel
+npx vercel --prod
+```
+
+Set these variables in **Vercel Project Settings → Environment Variables** for each target environment, then redeploy:
+
+- `JIRA_BASE_URL`
+- `JIRA_EMAIL`
+- `JIRA_API_TOKEN`
+- `GROQ_API_KEY`
+- `GROQ_MODEL` (optional; defaults to `openai/gpt-oss-120b`)
+- `PRODUCT_NAME` (optional; defaults to `VWO`)
+
+Do not upload or commit a local `.env` file. Settings are read-only on Vercel because serverless filesystem writes are not durable; update variables in the Vercel dashboard. The deployment can build without those variables, but generation will fail until valid values are configured.
+
 ### Configuration (`src/backend/.env`)
 
 | Key | Notes |
@@ -63,20 +74,19 @@ Secrets stay on the backend only. The Settings API returns `configured / not set
 ## Usage
 
 1. Open **Settings** and enter your Jira and Groq details.
-2. On any tab, enter `SCRUM-5` (or paste requirement text) plus optional focus context, then **Generate**.
-3. Review **Gaps & questions**: answer each one or accept it as a gap, then click **Regenerate with answers**.
-4. Check the **Accuracy report**: verified requirements, discarded claims, validator errors, reviewer findings.
-5. Export: plan/strategy → Markdown; test cases → **Excel (.xlsx)** or **CSV**.
+2. On Test Plan or Test Strategy, enter an issue, epic scope, or requirement text and optional focus context, then **Generate**. The result is a draft Markdown document.
+3. Review the Markdown draft and any template warnings before using it.
+4. Copy or export any artifact as Markdown.
 
 ## Verification performed
 
-- `npm test` in `src/backend`: 16 tests pass. They cover template parsing, the Jira ADF parser, quote verification, validators, dedupe, CSV/XLSX export (including formula-injection protection), the API error handling, and the full pipeline (requirement rejection, repair loop, clarification answers, accept-as-gap).
+- `npm test` in `src/backend`: mocked tests cover direct Markdown generation for all three artifacts, template headings/table columns, Groq response handling, template parsing, Jira ADF parsing, retained validator units, and API error handling.
 - Jira and Groq are **mocked** in the tests. The live integration has not been run here because it needs your credentials.
 - Frontend production build: `npm run build` succeeds.
 
 ## Known limitations / next steps
 
 - Live run against `SCRUM-5` has not been done yet. Next step: run it and compare the output against `VWO_Login_Test_Cases.docx` (recall + zero unsupported claims).
-- Plan/strategy export is Markdown only (DOCX not yet added).
+- All artifacts are direct model-generated drafts. Template checks verify headings or table columns only; they do not prove semantic traceability or prevent every unsupported claim.
+- Export format is Markdown only.
 - Jira attachments and linked Confluence pages are not fetched yet (planned for the Virtual APOC rollout).
-- The cache and run state are in memory, so restarting the backend changes nothing in Jira but clears cached P1/P2 results.

@@ -53,5 +53,11 @@ export function parseTemplate(artifact, md) {
 }
 
 export function loadTemplate(artifact) {
-  return parseTemplate(artifact, fs.readFileSync(path.join(TEMPLATES_DIR, TEMPLATE_FILES[artifact]), 'utf8'));
+  return parseTemplate(artifact, loadTemplateText(artifact));
+}
+
+export function loadTemplateText(artifact) {
+  const file = TEMPLATE_FILES[artifact];
+  if (!file) throw new Error(`Unknown template: ${artifact}`);
+  return fs.readFileSync(path.join(TEMPLATES_DIR, file), 'utf8');
 }

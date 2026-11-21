@@ -29,6 +29,7 @@ export function publicSettings() {
     productName: c.PRODUCT_NAME,
     jiraApiTokenSet: Boolean(c.JIRA_API_TOKEN),
     groqApiKeySet: Boolean(c.GROQ_API_KEY),
+    settingsEditable: !process.env.VERCEL,
   };
 }
 
@@ -43,6 +44,9 @@ const FIELD_MAP = {
 };
 
 export function updateSettings(patch, { persist = true } = {}) {
+  if (process.env.VERCEL) {
+    throw new AppError(503, 'SETTINGS_READ_ONLY', 'Settings are read-only on Vercel. Configure environment variables in the Vercel project settings.');
+  }
   if (!patch || typeof patch !== 'object') throw new AppError(400, 'BAD_REQUEST', 'Settings payload must be an object.');
   for (const [field, raw] of Object.entries(patch)) {
     const key = FIELD_MAP[field];

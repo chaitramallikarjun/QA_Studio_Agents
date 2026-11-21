@@ -1,0 +1,13 @@
+{
+  "installCommand": "npm install --prefix implementation/src/backend && npm install --prefix implementation/src/frontend",
+  "buildCommand": "npm run build --prefix implementation/src/frontend",
+  "outputDirectory": "implementation/src/frontend/dist",
+  "functions": {
+    "api/index.js": {
+      "includeFiles": "implementation/**/*.md"
+    }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api" }
+  ]
+}

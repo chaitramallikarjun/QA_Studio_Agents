@@ -51,12 +51,14 @@ export default function SettingsModal({ onClose }) {
           <button type="button" className="btn outline" onClick={onClose}>✕</button>
         </div>
         {!current && !error && <div className="state">Loading…</div>}
+        {current && !current.settingsEditable && <div className="alert">Settings are managed by the deployment. Update environment variables in Vercel Project Settings, then redeploy.</div>}
         {current && FIELDS.map((f) => (
           <label className="field" key={f.key}>
             <span>{f.label}{f.secret && <em className={current[f.secret] ? 'ok-text' : 'err-text'}> · {current[f.secret] ? 'configured' : 'not set'}</em>}</span>
             <input
               type={f.secret ? 'password' : 'text'}
               autoComplete="off"
+              disabled={!current.settingsEditable}
               value={form[f.key] || ''}
               placeholder={f.secret ? (current[f.secret] ? 'Leave blank to keep current value' : 'Enter value') : f.placeholder}
               onChange={(e) => { setSaved(false); setForm({ ...form, [f.key]: e.target.value }); }}
@@ -67,7 +69,7 @@ export default function SettingsModal({ onClose }) {
         {error && <div className="alert error">{error}</div>}
         {saved && <div className="alert ok">Settings saved.</div>}
         <div className="right">
-          <button className="btn primary" disabled={!current || saving}>{saving ? 'Saving…' : 'Save'}</button>
+          <button className="btn primary" disabled={!current || !current.settingsEditable || saving}>{saving ? 'Saving…' : 'Save'}</button>
         </div>
       </form>
     </div>
